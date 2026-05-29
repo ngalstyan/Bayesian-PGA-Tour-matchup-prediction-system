@@ -1,7 +1,9 @@
 # Secrets
 .env
 **/.env
-.claude/settings.local.json
+
+# Claude Code local config / docs
+.claude/
 
 # Proprietary / derived data (DataGolf is a paid tier, not redistributable)
 /data/
