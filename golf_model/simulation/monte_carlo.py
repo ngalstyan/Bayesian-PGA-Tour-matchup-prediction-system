@@ -383,11 +383,17 @@ class MonteCarloSimulator:
         Round model with autocorrelation:
             S_{i,1} = ability_i + ε_{i,1}
             S_{i,r} = ability_i + ρ·(S_{i,r-1} - ability_i) + ε_{i,r}
-            ε_{i,r} ~ t(ν, 0, σ²_i)
-            
+            ε_{i,r} ~ t(ν, 0, scale_i)   with   SD(ε_{i,r}) = σ_i
+
         The ρ term captures within-tournament momentum/conditions.
         Student-t noise handles the heavy tails in round scores.
-        
+
+        σ_i is interpreted as the player's EMPIRICAL round-to-round
+        standard deviation. A unit-scale t(ν) has variance ν/(ν-2) > 1,
+        so the draw is scaled by σ_i·√((ν-2)/ν) to make the realized
+        noise SD equal σ_i. Callers must pass raw empirical SDs and must
+        NOT pre-apply this correction themselves.
+
         Returns
         -------
         np.ndarray
@@ -396,17 +402,18 @@ class MonteCarloSimulator:
         """
         rho = self.round_correlation
         nu = self.observation_df
+        # Convert empirical SD to t-distribution scale parameter
+        t_scale = np.sqrt((nu - 2.0) / nu) if nu > 2.0 else 1.0
 
         round_scores = np.zeros((n_sims, n_players, 4))
 
         for r in range(4):
-            # Student-t noise: ε ~ t(ν) * σ_i
-            # scipy's t.rvs generates t with unit scale; multiply by σ_i
+            # Student-t noise: ε ~ t(ν) · σ_i · √((ν-2)/ν)
             noise = sp_stats.t.rvs(
                 df=nu,
                 size=(n_sims, n_players),
                 random_state=self.rng.integers(0, 2**31),
-            ) * sigmas[np.newaxis, :]
+            ) * (sigmas * t_scale)[np.newaxis, :]
 
             if r == 0:
                 # First round: no autocorrelation
