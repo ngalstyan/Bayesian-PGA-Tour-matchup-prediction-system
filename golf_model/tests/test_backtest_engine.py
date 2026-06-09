@@ -157,6 +157,15 @@ def test_matchups_join_year_correctly(backtest):
     assert side_by_year[2024] == "p2"
 
 
+def test_skip_accounting(backtest):
+    """Nothing should be skipped on clean synthetic data, and the skip
+    counters must exist so silent sample shrinkage is visible."""
+    _, _, result, _ = backtest
+    assert result.n_events_skipped == 0
+    assert result.skip_reasons == {}
+    assert result.total_events == 2
+
+
 def test_event_rounds_are_per_edition(backtest):
     """Field size and winner must come from one edition, not all years merged.
 

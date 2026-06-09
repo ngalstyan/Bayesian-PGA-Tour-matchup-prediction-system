@@ -114,6 +114,11 @@ class BacktestResult:
     gate_2_passed: bool = False
     gate_3_passed: bool = False
 
+    # Data-quality accounting: events the walk could not score, by reason.
+    # A high skip count means the backtest sample is not what you think.
+    n_events_skipped: int = 0
+    skip_reasons: Dict[str, int] = field(default_factory=dict)
+
 
 @dataclass
 class BacktestCache:
@@ -273,6 +278,11 @@ class BacktestEngine:
         results = []
         bankroll = self.settings.INITIAL_BANKROLL
         bankroll_series = [bankroll]
+        skip_reasons: Dict[str, int] = {}
+
+        def _skip(reason: str) -> None:
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
         cache_predictions = {}
         cache_event_meta = {}
         cache_h2h = {}
@@ -316,12 +326,14 @@ class BacktestEngine:
 
             if len(event_rounds) == 0:
                 logger.debug("Skipping event %d (no round data)", event_id)
+                _skip("no_round_data")
                 continue
 
             # Determine actual winner
             winner_id = self._get_winner(event_rounds)
             if winner_id is None:
-                logger.debug("Skipping event %d (no winner found)", event_id)
+                logger.warning("Skipping event %d (no winner found)", event_id)
+                _skip("no_winner")
                 continue
 
             n_players = event_rounds["player_id"].nunique()
@@ -340,6 +352,7 @@ class BacktestEngine:
                 )
             except Exception as e:
                 logger.error("Model failed for event %d: %s", event_id, e)
+                _skip("model_error")
                 continue
 
             # Handle both SimulationResult and plain dict returns
@@ -352,6 +365,7 @@ class BacktestEngine:
                 sim_result = None
 
             if not model_probs:
+                _skip("empty_predictions")
                 continue
 
             # Accumulate for cache (keyed by (event_id, year) — see BacktestCache)
@@ -418,11 +432,18 @@ class BacktestEngine:
 
         # --- Save cache if requested ---
         if cache_path and cache_predictions:
+            # Sim-affecting params (checked for staleness on evaluate) plus
+            # betting params recorded for provenance only — betting params
+            # are MEANT to be iterated on against a fixed cache.
             model_params = {
                 "EWMA_HALF_LIFE_ROUNDS": self.settings.EWMA_HALF_LIFE_ROUNDS,
                 "EWMA_HALF_LIFE_DAYS": self.settings.EWMA_HALF_LIFE_DAYS,
                 "OBSERVATION_DF": self.settings.OBSERVATION_DF,
                 "ROUND_CORRELATION_RHO": self.settings.ROUND_CORRELATION_RHO,
+                "_provenance_PROB_TEMPERATURE": getattr(self.settings, "PROB_TEMPERATURE", 1.0),
+                "_provenance_MATCHUP_MIN_EDGE": getattr(self.settings, "MATCHUP_MIN_EDGE", None),
+                "_provenance_KELLY_FRACTION": getattr(self.settings, "KELLY_FRACTION", None),
+                "_provenance_MATCHUP_MAX_BET_PCT": getattr(self.settings, "MATCHUP_MAX_BET_PCT", None),
             }
             cache = BacktestCache(
                 created_at=datetime.now().isoformat(),
@@ -442,6 +463,8 @@ class BacktestEngine:
 
         # --- Aggregate results ---
         result = self._aggregate_results(results, bankroll_series)
+        result.n_events_skipped = sum(skip_reasons.values())
+        result.skip_reasons = skip_reasons
 
         logger.info(
             "Backtest complete | %d events | "
@@ -454,6 +477,14 @@ class BacktestEngine:
             result.sharpe,
             result.max_dd_pct,
         )
+        if result.n_events_skipped > 0:
+            logger.warning(
+                "Backtest skipped %d of %d candidate events: %s — "
+                "verify the evaluated sample is what you intended",
+                result.n_events_skipped,
+                result.n_events_skipped + result.total_events,
+                skip_reasons,
+            )
 
         return result
 
@@ -876,7 +907,9 @@ class BacktestEngine:
                     devigged["true_prob"].astype(float),
                 ))
         except Exception as e:
-            logger.debug("Could not process market odds: %s", e)
+            # A failure here silently removes the market benchmark for the
+            # event — surface it instead of hiding it at debug level.
+            logger.warning("Could not process market odds: %s", e)
 
         return {}
 
@@ -986,7 +1019,9 @@ class BacktestEngine:
             return {"n_bets": len(bets), "stake_total": stake_total, "pnl": pnl}
 
         except Exception as e:
-            logger.debug("Betting P&L computation failed for event: %s", e)
+            # A broken betting pipeline must not masquerade as "no edges
+            # found" — that is how betting bugs hide in aggregate results.
+            logger.warning("Betting P&L computation failed for event: %s", e)
             return {"n_bets": 0, "stake_total": 0.0, "pnl": 0.0}
 
     def _aggregate_results(
