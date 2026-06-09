@@ -281,23 +281,29 @@ def generate_validation_report(
     total_staked: float,
     total_pnl: float,
     gate_thresholds: Optional[Dict] = None,
+    sharpe_annualization: float = 1.0,
 ) -> Dict:
     """
     Generate comprehensive validation report across all three gates.
-    
+
     Parameters
     ----------
     model_brier_scores : array — per-event Brier scores for model
     market_brier_scores : array — per-event Brier scores for market
     model_log_losses : array — per-event log-losses for model
     market_log_losses : array — per-event log-losses for market
-    bet_returns : array — per-bet returns (P&L / stake)
+    bet_returns : array — per-period returns (P&L / stake). Pass PER-EVENT
+        aggregates if you want an annualized Sharpe; per-bet returns must
+        not be annualized by an events-per-year factor.
     bankroll_series : array — bankroll over time
     total_staked : float
     total_pnl : float
     gate_thresholds : dict, optional
         Override default gate thresholds.
-        
+    sharpe_annualization : float, default 1.0
+        Periods per year of the return series (e.g. events_per_year from
+        validation.backtest). Default 1.0 = report the raw per-period Sharpe.
+
     Returns
     -------
     dict
@@ -334,7 +340,7 @@ def generate_validation_report(
     br = np.asarray(bankroll_series, dtype=np.float64)
 
     overall_roi = roi(total_pnl, total_staked)
-    overall_sharpe = sharpe_ratio(r, annualization_factor=40)  # ~40 events/year
+    overall_sharpe = sharpe_ratio(r, annualization_factor=sharpe_annualization)
     dd_dollar, dd_pct = max_drawdown(br)
 
     report["gate_3_betting"] = {

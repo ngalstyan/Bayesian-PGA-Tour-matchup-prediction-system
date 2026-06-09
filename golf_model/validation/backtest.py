@@ -45,6 +45,23 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def events_per_year(dates) -> float:
+    """
+    Events per year implied by a series of event dates.
+
+    Used as the Sharpe annualization base: per-event returns are
+    annualized by sqrt(events_per_year). Falls back to 1.0 (no
+    annualization) when the span is too short to estimate a rate.
+    """
+    ts = pd.to_datetime(pd.Series(list(dates))).dropna()
+    if len(ts) < 2:
+        return 1.0
+    span_years = (ts.max() - ts.min()).days / 365.25
+    if span_years <= 0:
+        return 1.0
+    return len(ts) / span_years
+
+
 @dataclass
 class BacktestEvent:
     """Results for a single backtested tournament."""
@@ -590,6 +607,10 @@ class BacktestEngine:
 
         bets = []
         bankroll_series = [bankroll]
+        # Per-event returns for ALL evaluated events (0.0 when no bets were
+        # placed) — excluding quiet events overstates the Sharpe ratio.
+        event_returns = []
+        event_dates = []
 
         sorted_events = sorted(
             cache.event_metadata.items(),
@@ -613,8 +634,8 @@ class BacktestEngine:
             if event_odds.empty:
                 continue
 
-            event_pnl = 0.0
-            event_bets = 0
+            # Phase 1: collect candidate bets for this event (unsettled)
+            candidates = []
 
             for _, row in event_odds.iterrows():
                 p1_id = int(row["p1_dg_id"])
@@ -685,11 +706,7 @@ class BacktestEngine:
                 if stake < 1.0:  # Min $1 bet
                     continue
 
-                pnl = stake * (decimal_odds - 1.0) if won else -stake
-                event_pnl += pnl
-                event_bets += 1
-
-                bets.append({
+                candidates.append({
                     "event_id": event_id,
                     "event_name": meta["event_name"],
                     "date": meta["date"],
@@ -702,13 +719,45 @@ class BacktestEngine:
                     "market_p": round(market_p1 if bet_side == "p1" else market_p2, 4),
                     "edge": round(edge, 4),
                     "decimal_odds": decimal_odds,
-                    "stake": round(stake, 2),
+                    "stake": stake,
                     "won": won,
-                    "pnl": round(pnl, 2),
                 })
+
+            # Phase 2: event-level exposure cap. Independently Kelly-sized
+            # bets in the same event can sum far beyond any sane exposure
+            # (~30+ matchups × per-bet cap). Scale down proportionally so the
+            # relative Kelly weighting is preserved (same approach as
+            # KellyCalculator._apply_tournament_cap).
+            max_exposure_pct = getattr(
+                self.settings, "MAX_TOURNAMENT_EXPOSURE_PCT", 1.0
+            )
+            max_exposure = max_exposure_pct * bankroll
+            total_stake = sum(c["stake"] for c in candidates)
+            if max_exposure > 0 and total_stake > max_exposure:
+                scale = max_exposure / total_stake
+                logger.debug(
+                    "Event %s: exposure $%.2f exceeds cap $%.2f, scaling by %.2f",
+                    meta["event_name"][:30], total_stake, max_exposure, scale,
+                )
+                for c in candidates:
+                    c["stake"] *= scale
+
+            # Phase 3: settle
+            event_pnl = 0.0
+            event_staked = 0.0
+            for c in candidates:
+                stake = c["stake"]
+                pnl = stake * (c["decimal_odds"] - 1.0) if c["won"] else -stake
+                event_pnl += pnl
+                event_staked += stake
+                c["stake"] = round(stake, 2)
+                c["pnl"] = round(pnl, 2)
+                bets.append(c)
 
             bankroll += event_pnl
             bankroll_series.append(bankroll)
+            event_returns.append(event_pnl / event_staked if event_staked > 0 else 0.0)
+            event_dates.append(meta["date"])
 
         # Aggregate results
         bets_df = pd.DataFrame(bets) if bets else pd.DataFrame()
@@ -720,15 +769,12 @@ class BacktestEngine:
         br = np.array(bankroll_series)
         _, dd_pct = max_drawdown(br) if len(br) > 1 else (0, 0)
 
-        # Sharpe from per-event returns
-        event_returns = []
-        if len(bets_df) > 0:
-            for _, g in bets_df.groupby("event_id"):
-                ev_staked = g["stake"].sum()
-                if ev_staked > 0:
-                    event_returns.append(g["pnl"].sum() / ev_staked)
-        event_returns = np.array(event_returns) if event_returns else np.array([0.0])
-        sharpe = round(sharpe_ratio(event_returns, annualization_factor=40), 2)
+        # Sharpe from per-event returns over ALL evaluated events (zero-bet
+        # events contribute 0.0), annualized by the actual event frequency
+        # rather than a hardcoded events-per-year guess.
+        returns_arr = np.array(event_returns) if event_returns else np.array([0.0])
+        ann_factor = events_per_year(event_dates)
+        sharpe = round(sharpe_ratio(returns_arr, annualization_factor=ann_factor), 2)
 
         result = {
             "n_bets": n_bets,
@@ -741,6 +787,8 @@ class BacktestEngine:
             "max_dd_pct": round(dd_pct * 100, 1),
             "final_bankroll": round(bankroll, 2),
             "n_events_with_bets": bets_df["event_id"].nunique() if len(bets_df) > 0 else 0,
+            "n_events_evaluated": len(event_returns),
+            "events_per_year": round(ann_factor, 1),
             "bets_df": bets_df,
         }
 
@@ -961,11 +1009,13 @@ class BacktestEngine:
         br = np.array(bankroll_series)
         dd_dollar, dd_pct = max_drawdown(br) if len(br) > 1 else (0, 0)
 
-        bet_returns = []
-        for e in events:
-            if e.stake_total > 0:
-                bet_returns.append(e.pnl / e.stake_total)
-        bet_returns = np.array(bet_returns) if bet_returns else np.array([0.0])
+        # Per-event returns over ALL scored events (0.0 when no bets placed),
+        # annualized by the actual event frequency in the data.
+        bet_returns = np.array([
+            e.pnl / e.stake_total if e.stake_total > 0 else 0.0
+            for e in events
+        ])
+        ann_factor = events_per_year([e.date for e in events])
 
         result = BacktestResult(
             events=events,
@@ -978,7 +1028,7 @@ class BacktestEngine:
             total_staked=total_staked,
             total_pnl=total_pnl,
             roi_pct=round(roi(total_pnl, total_staked) * 100, 2) if total_staked > 0 else 0,
-            sharpe=round(sharpe_ratio(bet_returns, annualization_factor=40), 2),  # ~40 PGA events/year
+            sharpe=round(sharpe_ratio(bet_returns, annualization_factor=ann_factor), 2),
             max_dd_pct=round(dd_pct * 100, 1),
         )
 
