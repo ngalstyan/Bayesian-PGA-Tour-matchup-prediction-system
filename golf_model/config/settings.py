@@ -188,6 +188,20 @@ class Settings:
         "water_hazard_pct",   # Pct of holes with water in play
     ])
 
+    # Production EWMA model (the model behind notebooks 08/09).
+    # These were previously hardcoded in the notebooks — kept here so the
+    # backtest and live deployment provably run the same configuration.
+    # FROZEN pending out-of-sample validation: do not re-tune against the
+    # 2023–2024 holdout (it was already used for selection — see AUDIT.md 2.3).
+    COURSE_SG_BLEND: float = 0.50            # Weight on course-variance-weighted SG components
+    MIN_COURSE_ROUNDS_FOR_WEIGHTS: int = 40  # Min historical rounds at event for course weights
+    RECENT_FORM_BLEND: float = 0.40          # Weight on recent-form mean
+    RECENT_FORM_ROUNDS: int = 8              # Recent-form window (rounds)
+    RECENT_FORM_MIN_ROUNDS: int = 6          # Min rounds in window to apply the blend
+    COURSE_FIT_SHRINKAGE: float = 0.50       # τ for event-history course-fit shrinkage
+    MU_STD_CAP: float = 0.10                 # Cap on skill-estimate uncertainty fed to MC
+    PRODUCTION_N_SIMULATIONS: int = 50_000   # MC iterations for backtest/live predictions
+
     # Bayesian model (Phase 3)
     MCMC_DRAWS: int = 2000                   # Posterior samples (after warmup)
     MCMC_TUNE: int = 1000                    # Warmup/tuning iterations
@@ -232,14 +246,17 @@ class Settings:
     #   - Softer books = larger available edge vs model.
     # ==========================================================================
 
+    # NOTE: these defaults are the values actually used by the notebook 08
+    # backtest and notebook 09 live deployment (they previously drifted:
+    # the notebooks overrode 1.05/0.01/2500 in-place).
     KELLY_FRACTION: float = 0.25
-    MIN_EDGE_THRESHOLD: float = 1.05         # P_model / P_market ratio
+    MIN_EDGE_THRESHOLD: float = 1.50         # P_model / P_market ratio (outrights, high conviction)
     MIN_KELLY_FRACTION: float = 0.002        # Min fraction to justify bet
-    MIN_BET_PROBABILITY: float = 0.01        # Skip bets where P_market < 1%
-    PROB_TEMPERATURE: float = 0.35            # <1 sharpens model probs (validated via backtest)
+    MIN_BET_PROBABILITY: float = 0.05        # Skip outright bets where P_market < 5%
+    PROB_TEMPERATURE: float = 0.35            # <1 sharpens model probs (chosen on the 2023-24 holdout — see AUDIT.md 2.3)
     MAX_SINGLE_BET_PCT: float = 0.02         # 2% of bankroll per bet (outrights)
     MAX_TOURNAMENT_EXPOSURE_PCT: float = 0.30 # 30% of bankroll per event (matchups)
-    INITIAL_BANKROLL: float = 2500.0         # Starting bankroll ($)
+    INITIAL_BANKROLL: float = 5000.0         # Starting bankroll ($)
 
     # Matchup betting parameters
     MATCHUP_MIN_EDGE: float = 0.08           # Min P_model - P_market edge for H2H bets
