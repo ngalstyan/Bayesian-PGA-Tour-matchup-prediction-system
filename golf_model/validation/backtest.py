@@ -100,23 +100,32 @@ class BacktestResult:
 
 @dataclass
 class BacktestCache:
-    """Cached simulation results for fast betting parameter iteration."""
-    VERSION: ClassVar[int] = 2
+    """
+    Cached simulation results for fast betting parameter iteration.
+
+    V3: All prediction dicts are keyed by the composite event key
+    (event_id, calendar_year) — NOT event_id alone. DataGolf reuses
+    event_id across annual editions of the same tournament, so keying
+    by event_id alone silently overwrites earlier editions and lets
+    later-trained models be evaluated against earlier years' odds
+    (lookahead bias).
+    """
+    VERSION: ClassVar[int] = 3
 
     created_at: str
     model_description: str
     holdout_seasons: List[int]
     n_events: int
     model_params: Dict[str, Any]
-    predictions: Dict[int, Dict[int, float]]       # {event_id: {player_id: P(win)}}
-    event_metadata: Dict[int, Dict]                 # {event_id: {event_name, date, n_players, winner_id}}
+    predictions: Dict[Tuple[int, int], Dict[int, float]]       # {(event_id, year): {player_id: P(win)}}
+    event_metadata: Dict[Tuple[int, int], Dict]                 # {(event_id, year): {event_name, date, calendar_year, n_players, winner_id}}
 
-    # V2 fields — full simulation results
-    h2h_predictions: Optional[Dict[int, Dict[int, Dict[int, float]]]] = None   # {event_id: {pid_a: {pid_b: P(A>B)}}}
-    top5_predictions: Optional[Dict[int, Dict[int, float]]] = None             # {event_id: {player_id: P(top5)}}
-    top10_predictions: Optional[Dict[int, Dict[int, float]]] = None            # {event_id: {player_id: P(top10)}}
-    top20_predictions: Optional[Dict[int, Dict[int, float]]] = None            # {event_id: {player_id: P(top20)}}
-    make_cut_predictions: Optional[Dict[int, Dict[int, float]]] = None         # {event_id: {player_id: P(make_cut)}}
+    # Full simulation results
+    h2h_predictions: Optional[Dict[Tuple[int, int], Dict[int, Dict[int, float]]]] = None   # {(event_id, year): {pid_a: {pid_b: P(A>B)}}}
+    top5_predictions: Optional[Dict[Tuple[int, int], Dict[int, float]]] = None             # {(event_id, year): {player_id: P(top5)}}
+    top10_predictions: Optional[Dict[Tuple[int, int], Dict[int, float]]] = None            # {(event_id, year): {player_id: P(top10)}}
+    top20_predictions: Optional[Dict[Tuple[int, int], Dict[int, float]]] = None            # {(event_id, year): {player_id: P(top20)}}
+    make_cut_predictions: Optional[Dict[Tuple[int, int], Dict[int, float]]] = None         # {(event_id, year): {player_id: P(make_cut)}}
 
     def save(self, path: Path) -> None:
         path = Path(path)
@@ -130,9 +139,20 @@ class BacktestCache:
         with open(path, "rb") as f:
             data = pickle.load(f)
         if isinstance(data, dict) and "cache" in data:
+            version = data.get("version", 1)
             cache = data["cache"]
         else:
+            version = 1
             cache = data
+        if version < 3:
+            raise ValueError(
+                f"Cache at {path} is version {version}, which predates the "
+                "event-year collision fix: predictions were keyed by event_id "
+                "alone and later years overwrote earlier editions, and simulated "
+                "fields/winners merged multiple years. These caches produce "
+                "lookahead-biased results and cannot be migrated. "
+                "Regenerate with BacktestEngine.run()."
+            )
         logger.info("Cache loaded from %s (%d events)", path, cache.n_events)
         return cache
 
@@ -248,6 +268,10 @@ class BacktestEngine:
             event_id = int(event_row["event_id"])
             event_date = event_row["start_date"]
             event_name = event_row.get("event_name", f"Event {event_id}")
+            event_year = int(event_date.year)
+            # DataGolf reuses event_id across annual editions — every cache
+            # entry must be keyed by (event_id, year) to keep editions apart.
+            event_key = (event_id, event_year)
 
             # --- CRITICAL: Training data = only events BEFORE this one ---
             train_mask = pd.to_datetime(rounds_df["date"]) < event_date
@@ -256,7 +280,6 @@ class BacktestEngine:
             # Event-specific data
             event_rounds = rounds_df[rounds_df["event_id"] == event_id]
             if len(odds_df) > 0:
-                event_year = event_date.year
                 odds_mask = odds_df["event_id"] == event_id
                 if "calendar_year" in odds_df.columns:
                     odds_mask &= odds_df["calendar_year"] == event_year
@@ -304,11 +327,12 @@ class BacktestEngine:
             if not model_probs:
                 continue
 
-            # Accumulate for cache
-            cache_predictions[event_id] = model_probs
-            cache_event_meta[event_id] = {
+            # Accumulate for cache (keyed by (event_id, year) — see BacktestCache)
+            cache_predictions[event_key] = model_probs
+            cache_event_meta[event_key] = {
                 "event_name": event_name,
                 "date": str(event_date.date()),
+                "calendar_year": event_year,
                 "n_players": n_players,
                 "winner_id": winner_id,
             }
@@ -316,11 +340,11 @@ class BacktestEngine:
             # Cache extended sim results if available
             if sim_result is not None:
                 if sim_result.h2h_probs:
-                    cache_h2h[event_id] = sim_result.h2h_probs
-                cache_top5[event_id] = sim_result.top5_probs
-                cache_top10[event_id] = sim_result.top10_probs
-                cache_top20[event_id] = sim_result.top20_probs
-                cache_make_cut[event_id] = sim_result.make_cut_probs
+                    cache_h2h[event_key] = sim_result.h2h_probs
+                cache_top5[event_key] = sim_result.top5_probs
+                cache_top10[event_key] = sim_result.top10_probs
+                cache_top20[event_key] = sim_result.top20_probs
+                cache_make_cut[event_key] = sim_result.make_cut_probs
 
             # Sharpen model probs (cache stores raw; scoring uses sharpened)
             model_probs = self._sharpen_probs(model_probs)
@@ -451,8 +475,9 @@ class BacktestEngine:
         bankroll = self.settings.INITIAL_BANKROLL
         bankroll_series = [bankroll]
 
-        for event_id, meta in sorted_events:
-            model_probs = self._sharpen_probs(cache.predictions.get(event_id, {}))
+        for event_key, meta in sorted_events:
+            event_id, event_year = event_key
+            model_probs = self._sharpen_probs(cache.predictions.get(event_key, {}))
             if not model_probs:
                 continue
 
@@ -461,12 +486,11 @@ class BacktestEngine:
             n_players = meta["n_players"]
             winner_id = meta["winner_id"]
 
-            # Get event odds
+            # Get event odds — must match BOTH event_id and edition year
             if len(odds_df) > 0:
-                event_date = pd.Timestamp(date)
                 odds_mask = odds_df["event_id"] == event_id
                 if "calendar_year" in odds_df.columns:
-                    odds_mask &= odds_df["calendar_year"] == event_date.year
+                    odds_mask &= odds_df["calendar_year"] == event_year
                 event_odds = odds_df[odds_mask]
             else:
                 event_odds = pd.DataFrame()
@@ -562,13 +586,20 @@ class BacktestEngine:
             key=lambda x: x[1]["date"],
         )
 
-        for event_id, meta in sorted_events:
-            h2h = cache.h2h_predictions.get(event_id, {})
+        for event_key, meta in sorted_events:
+            event_id, event_year = event_key
+            h2h = cache.h2h_predictions.get(event_key, {})
             if not h2h:
                 continue
 
-            # Get matchup odds for this event
-            event_odds = odds[odds["event_id"] == event_id]
+            # Get matchup odds for this event — must match BOTH event_id and
+            # edition year. Matching on event_id alone evaluates one year's
+            # model (trained on later data) against another year's odds,
+            # which is lookahead bias.
+            odds_mask = odds["event_id"] == event_id
+            if "calendar_year" in odds.columns:
+                odds_mask &= odds["calendar_year"] == event_year
+            event_odds = odds[odds_mask]
             if event_odds.empty:
                 continue
 
