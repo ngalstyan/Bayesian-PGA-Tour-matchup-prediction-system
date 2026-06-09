@@ -274,11 +274,21 @@ class BacktestEngine:
             event_key = (event_id, event_year)
 
             # --- CRITICAL: Training data = only events BEFORE this one ---
-            train_mask = pd.to_datetime(rounds_df["date"]) < event_date
+            round_dates = pd.to_datetime(rounds_df["date"])
+            train_mask = round_dates < event_date
             train_rounds = rounds_df[train_mask]
 
-            # Event-specific data
-            event_rounds = rounds_df[rounds_df["event_id"] == event_id]
+            # Event-specific data: same event_id AND this edition's dates.
+            # Rounds are stamped with the event completion date, which is
+            # always within ~2 weeks after the start date. Without the date
+            # window, recurring event_ids merge multiple years' editions
+            # (wrong field, wrong winner).
+            event_mask = (
+                (rounds_df["event_id"] == event_id)
+                & (round_dates >= event_date)
+                & (round_dates <= event_date + pd.Timedelta(days=14))
+            )
+            event_rounds = rounds_df[event_mask]
             if len(odds_df) > 0:
                 odds_mask = odds_df["event_id"] == event_id
                 if "calendar_year" in odds_df.columns:
@@ -748,7 +758,23 @@ class BacktestEngine:
     # ==========================================================================
 
     def _get_winner(self, event_rounds: pd.DataFrame) -> Optional[int]:
-        """Determine the winner of a tournament from round data."""
+        """Determine the winner of a tournament from round data.
+
+        Preference order:
+        1. fin_text == "1" (DataGolf's official finish; playoff winners
+           get "1", playoff losers get "T2"/"2" — so this respects playoffs).
+        2. finish_position == 1 (alternative schema).
+        3. Lowest summed round_score among players with the most rounds
+           played (ignores playoffs, picks the 72-hole leader).
+        4. Highest summed sg_total (last resort, same caveat).
+        """
+        if "fin_text" in event_rounds.columns:
+            winners = event_rounds[
+                event_rounds["fin_text"].astype(str).str.strip().isin(["1", "T1"])
+            ]
+            if len(winners) > 0:
+                return int(winners["player_id"].iloc[0])
+
         if "finish_position" in event_rounds.columns:
             winners = event_rounds[
                 event_rounds["finish_position"].astype(str).isin(["1", "1.0", "T1"])
@@ -756,7 +782,19 @@ class BacktestEngine:
             if len(winners) > 0:
                 return int(winners["player_id"].iloc[0])
 
-        # Fallback: lowest total score across 4 rounds
+        # Fallback: lowest total strokes among players who completed all
+        # rounds (cut-missers play fewer rounds and would otherwise "win"
+        # on raw stroke sums)
+        if "round_score" in event_rounds.columns:
+            counts = event_rounds.groupby("player_id")["round_score"].count()
+            finishers = counts[counts == counts.max()].index
+            totals = (
+                event_rounds[event_rounds["player_id"].isin(finishers)]
+                .groupby("player_id")["round_score"].sum()
+            )
+            if len(totals) > 0:
+                return int(totals.idxmin())
+
         if "score" in event_rounds.columns:
             totals = event_rounds.groupby("player_id")["score"].sum()
             if len(totals) > 0:

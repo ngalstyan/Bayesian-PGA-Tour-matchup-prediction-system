@@ -60,16 +60,15 @@ def _make_rounds():
         for d in pd.date_range("2022-01-09", periods=10, freq="7D"):
             rows.append({"player_id": pid, "event_id": 900 + pid,
                          "date": d, "sg_total": 0.5 if pid == 1 else -0.5})
-    # 2023 edition (rounds stamped with completion date, after start)
-    for pid in (1, 2):
+    # 2023 edition (rounds stamped with completion date, after start).
+    # Player 3 plays ONLY the 2023 edition; player 1 wins on SG.
+    for pid, sg in ((1, 2.0), (2, -2.0), (3, -3.0)):
         rows.append({"player_id": pid, "event_id": EVENT_ID,
-                     "date": pd.Timestamp("2023-06-04"),
-                     "sg_total": 2.0 if pid == 1 else -2.0})
-    # 2024 edition
-    for pid in (1, 2):
+                     "date": pd.Timestamp("2023-06-04"), "sg_total": sg})
+    # 2024 edition: only players 1 and 2; player 2 wins on SG.
+    for pid, sg in ((1, -2.0), (2, 2.0)):
         rows.append({"player_id": pid, "event_id": EVENT_ID,
-                     "date": pd.Timestamp("2024-06-04"),
-                     "sg_total": -2.0 if pid == 1 else 2.0})
+                     "date": pd.Timestamp("2024-06-04"), "sg_total": sg})
     return pd.DataFrame(rows)
 
 
@@ -156,6 +155,44 @@ def test_matchups_join_year_correctly(backtest):
     side_by_year = dict(zip(pd.to_datetime(bets["date"]).dt.year, bets["bet_side"]))
     assert side_by_year[2023] == "p1"
     assert side_by_year[2024] == "p2"
+
+
+def test_event_rounds_are_per_edition(backtest):
+    """Field size and winner must come from one edition, not all years merged.
+
+    Player 3 plays only the 2023 edition; the SG-fallback winner is player 1
+    in 2023 and player 2 in 2024. Pre-fix, both editions merged into one
+    pool (field of 3 both years, single cross-year pseudo-winner).
+    """
+    _, _, _, cache = backtest
+    meta_2023 = cache.event_metadata[(EVENT_ID, 2023)]
+    meta_2024 = cache.event_metadata[(EVENT_ID, 2024)]
+    assert meta_2023["n_players"] == 3
+    assert meta_2024["n_players"] == 2
+    assert meta_2023["winner_id"] == 1
+    assert meta_2024["winner_id"] == 2
+
+
+def test_get_winner_respects_playoff_fin_text(tmp_path):
+    """Two players tied on strokes; fin_text '1' (playoff winner) must win."""
+    engine = BacktestEngine(_make_settings(tmp_path))
+    event_rounds = pd.DataFrame({
+        "player_id": [1, 2, 3],
+        "round_score": [270, 270, 275],
+        "sg_total": [2.0, 2.1, 0.5],     # SG would (wrongly) pick player 2
+        "fin_text": ["1", "T2", "3"],    # player 1 won the playoff
+    })
+    assert engine._get_winner(event_rounds) == 1
+
+
+def test_get_winner_round_score_excludes_cut_missers(tmp_path):
+    """Without fin_text, a 2-round cut-misser must not win on raw stroke sum."""
+    engine = BacktestEngine(_make_settings(tmp_path))
+    event_rounds = pd.DataFrame({
+        "player_id": [1, 1, 1, 1, 2, 2],
+        "round_score": [68, 67, 69, 66, 72, 74],  # p2 missed cut: sum 146 < 270
+    })
+    assert engine._get_winner(event_rounds) == 1
 
 
 def test_old_cache_versions_are_refused(tmp_path):
