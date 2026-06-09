@@ -54,6 +54,11 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Added to cut-missers' 36-hole totals when settling H2H matchups, so any
+# cut-maker beats any cut-misser while cut-missers keep their 36-hole order.
+# Simulated scores are SG-scale (|score| < ~100), so 1e6 can never overlap.
+_CUT_MISS_PENALTY = 1e6
+
 
 @dataclass
 class PlayerAbility:
@@ -200,7 +205,6 @@ class MonteCarloSimulator:
 
         # H2H pairwise counts: h2h_counts[i,j] = # sims where player i beat player j
         h2h_counts = np.zeros((n_players, n_players), dtype=np.int64) if compute_h2h else None
-        h2h_valid = np.zeros((n_players, n_players), dtype=np.int64) if compute_h2h else None
 
         # --- Main simulation loop ---
         # Process in batches for memory efficiency
@@ -245,18 +249,24 @@ class MonteCarloSimulator:
                 top10_counts[valid_pos & (positions <= 10)] += 1
                 top20_counts[valid_pos & (positions <= 20)] += 1
 
-                # H2H pairwise: who beat whom (using total scores, not positions, for tie handling)
+                # H2H pairwise settlement per standard 72-hole match rules:
+                #   - exactly one player makes the cut → he wins the matchup
+                #   - both make the cut → lower 72-hole total wins
+                #   - both miss the cut → lower 36-hole total wins
+                #   - equal scores → void (counted for neither side)
+                # Implemented via a single "settlement score" per player:
+                # 72-hole total for cut-makers, 36-hole total plus a large
+                # penalty for cut-missers (so any cut-maker beats any
+                # cut-misser, while cut-missers keep their 36-hole order).
                 if compute_h2h:
-                    valid_idx = np.where(valid_pos)[0]
-                    if len(valid_idx) > 1:
-                        ts = outcome["total_scores"][valid_idx]
-                        # wins_mat[i,j] = True if valid_idx[i] beat valid_idx[j] (lower score)
-                        wins_mat = ts[:, None] < ts[None, :]
-                        ii, jj = np.meshgrid(valid_idx, valid_idx, indexing="ij")
-                        np.add.at(h2h_counts, (ii[wins_mat], jj[wins_mat]), 1)
-                        # Track valid comparisons (both made cut, not tied)
-                        not_tied = ts[:, None] != ts[None, :]
-                        np.add.at(h2h_valid, (ii[not_tied], jj[not_tied]), 1)
+                    made_cut = outcome["made_cut"]
+                    settlement = np.where(
+                        made_cut,
+                        outcome["total_scores"],
+                        outcome["r2_scores"] + _CUT_MISS_PENALTY,
+                    )
+                    # wins_mat[i,j] = True if player i beat player j (lower score)
+                    h2h_counts += settlement[:, None] < settlement[None, :]
 
             if (batch_idx + 1) % max(1, n_batches // 5) == 0:
                 pct = (batch_idx + 1) / n_batches * 100

@@ -236,6 +236,7 @@ def simulate_tournament_outcome(
         "winner_idx" : int — index of winner
         "made_cut" : np.ndarray — boolean (N_players,)
         "total_scores" : np.ndarray — 72-hole totals (N_players,)
+        "r2_scores" : np.ndarray — 36-hole totals, all players (N_players,)
         "positions" : np.ndarray — finish positions (N_players,)
     """
     if rng is None:
@@ -265,6 +266,7 @@ def simulate_tournament_outcome(
         "winner_idx": winner_idx,
         "made_cut": made_cut,
         "total_scores": total_scores,
+        "r2_scores": score_after_r2,
         "positions": positions,
         "n_made_cut": int(n_made_cut),
     }
