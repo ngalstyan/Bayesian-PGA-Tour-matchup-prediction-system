@@ -141,7 +141,9 @@ models locally.
 
 ```bash
 # 1. Environment
-conda env create -f golf_model/environment.yml
+conda env create -f golf_model/environment.yml          # loose spec (latest compatible versions)
+# conda env create -f golf_model/environment.lock.yml   # exact pinned versions — use this to
+#                                                       # reproduce the published backtest numbers
 conda activate golf_model
 
 # 2. Credentials
@@ -155,6 +157,14 @@ python scripts/14_pull_season_data.py --key YOUR_DATAGOLF_API_KEY
 python golf_model/run_pipeline.py --mode train
 python golf_model/run_pipeline.py --mode backtest
 python golf_model/run_pipeline.py --mode predict --event_id 12345
+
+# 5. Reproduce the canonical validation runs (results JSONs in golf_model/artifacts/outputs/)
+cd golf_model
+python run_holdout_backtest.py    # 2023-24 holdout backtest + integrity checks (~30-60 min)
+python run_oos_validation.py      # frozen-parameter 2025-26 out-of-sample validation
+
+# 6. Tests (regression tests for the lookahead fix, H2H settlement, Sharpe, sizing caps)
+cd golf_model && python -m pytest tests/ -q
 ```
 
 The weekly workflow lives in the notebooks — see
