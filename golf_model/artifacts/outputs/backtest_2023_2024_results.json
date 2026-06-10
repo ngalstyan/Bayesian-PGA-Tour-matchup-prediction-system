@@ -1,0 +1,99 @@
+{
+  "generated_at": "2026-06-10T15:25:48.103777",
+  "git_sha": "285570fb536bf1c9079accd23629f4ab027b2326",
+  "holdout_seasons": [
+    2023,
+    2024
+  ],
+  "caveat": "Betting hyperparameters (MATCHUP_MIN_EDGE, PROB_TEMPERATURE, sizing) were historically selected on this same holdout (AUDIT.md 2.3). Treat these numbers as a diagnostic, not an out-of-sample estimate. See the 2025-2026 OOS validation.",
+  "model_params": {
+    "EWMA_HALF_LIFE_ROUNDS": 25.0,
+    "EWMA_HALF_LIFE_DAYS": 120.0,
+    "OBSERVATION_DF": 6.0,
+    "ROUND_CORRELATION_RHO": 0.15,
+    "COURSE_SG_BLEND": 0.5,
+    "RECENT_FORM_BLEND": 0.4,
+    "COURSE_FIT_SHRINKAGE": 0.5,
+    "MU_STD_CAP": 0.1,
+    "PRODUCTION_N_SIMULATIONS": 50000,
+    "PROB_TEMPERATURE": 0.35,
+    "MATCHUP_MIN_EDGE": 0.08,
+    "KELLY_FRACTION": 0.25,
+    "MATCHUP_MAX_BET_PCT": 0.015,
+    "MAX_TOURNAMENT_EXPOSURE_PCT": 0.3,
+    "OVERROUND_METHOD": "proportional"
+  },
+  "integrity": {
+    "n_cache_entries": 95,
+    "n_unique_event_ids": 58,
+    "keys_match_meta_year": true,
+    "winners_checked": 95,
+    "winners_correct": 95,
+    "winner_mismatches": []
+  },
+  "walk": {
+    "n_events_scored": 190,
+    "n_events_skipped": 0,
+    "skip_reasons": {}
+  },
+  "outright": {
+    "n_events": 95,
+    "model_avg_brier": 0.01494,
+    "market_avg_brier": 0.01273,
+    "n_bets": 84,
+    "total_staked": 10122.77,
+    "total_pnl": 2174.07,
+    "roi_pct": 21.48,
+    "sharpe": 0.75,
+    "max_dd_pct": 28.3,
+    "gate_1_calibration": false,
+    "gate_2_significance": false,
+    "gate_3_betting": true
+  },
+  "h2h_matchups": {
+    "n_bets": 2075,
+    "n_won": 1034,
+    "win_rate": 49.8,
+    "total_staked": 68461.37,
+    "total_pnl": -3652.66,
+    "roi_pct": -5.3,
+    "sharpe": -1.33,
+    "max_dd_pct": 73.4,
+    "final_bankroll": 1346.89,
+    "n_events_with_bets": 55,
+    "n_events_evaluated": 90,
+    "events_per_year": 47.0,
+    "per_year": {
+      "2023": {
+        "n_bets": 985,
+        "win_rate_pct": 49.0,
+        "roi_pct": -6.7
+      },
+      "2024": {
+        "n_bets": 1090,
+        "win_rate_pct": 50.6,
+        "roi_pct": -3.2
+      }
+    },
+    "flat_stake_roi": {
+      "flat_roi_pct": -4.71,
+      "iid_ci95_pct": [
+        -8.84,
+        -0.58
+      ],
+      "cluster_bootstrap_ci95_pct": [
+        -9.83,
+        0.34
+      ],
+      "p_roi_leq_0": 0.9668,
+      "n_bootstrap": 5000
+    },
+    "gates": {
+      "sample_size_ge_100": true,
+      "win_rate_gt_50": "False",
+      "roi_gt_0": "False",
+      "sharpe_gt_0.3": false,
+      "all_passed": false
+    }
+  }
+}

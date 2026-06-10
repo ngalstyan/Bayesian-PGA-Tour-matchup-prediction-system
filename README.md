@@ -4,8 +4,11 @@ A quantitative system for betting PGA Tour golf. It models player skill with a h
 strokes-gained framework, simulates tournaments via Monte Carlo, finds edges against sportsbook odds,
 and sizes bets with fractional Kelly.
 
-> **Status:** Head-to-head (H2H) matchup betting passes all validation gates and is the live strategy.
-> Outright-winner betting does **not** pass calibration — see [Results](#results).
+> **Status (June 2026):** A code audit found a lookahead bug in the original backtest (DataGolf reuses
+> `event_id` across annual editions; ~47% of H2H bets were priced with models trained on future data).
+> After the fix, the corrected 2023–24 backtest shows **no demonstrated H2H edge vs the Pinnacle closing
+> line** (49.8% win rate, −5.3% ROI). **Live betting is paused** pending the frozen-parameter 2025–26
+> out-of-sample validation. Outright-winner betting still fails calibration. See [Results](#results).
 
 ---
 
@@ -29,59 +32,87 @@ to be the right call:
 - The model only has to rank two players relative to each other, which is exactly what strokes-gained data
   is good at.
 
-On the matchup side the results held up across a proper expanding-window backtest, and that's what the
-system bets today.
+The matchup thesis (less noise, less vig, pairwise ranking is what strokes-gained data is good at) still
+stands — but the original backtest that appeared to validate it contained a lookahead bug, and the corrected
+numbers do not show an edge against the Pinnacle closing line. The honest state of the project is below.
 
 ---
 
 ## Results
 
-Validated on a strict **2023–2024 holdout** (expanding window, no lookahead), after training on 2017–2022.
+Evaluated on a **2023–2024 holdout** (expanding window) after training on 2017–2022. Canonical record:
+[`golf_model/artifacts/outputs/backtest_2023_2024_results.json`](golf_model/artifacts/outputs/backtest_2023_2024_results.json),
+reproducible headlessly with `cd golf_model && python run_holdout_backtest.py`.
 
-### Head-to-head matchups — the live strategy
+### The bug that invalidated the original results
 
-| Metric | Value |
-|---|---|
-| Bets | 1,854 across 55 events |
-| Win rate | 56.6% |
-| ROI | +6.0% |
-| Sharpe | 1.48 |
-| Max drawdown | 27.9% |
-| Backtest P&L | +$37,176 |
-| Avg edge / odds / stake | 13.4% / 1.94 / $336 |
+The originally published H2H numbers (1,854 bets, 56.6% win rate, +6.0% ROI, Sharpe 1.48) were an artifact
+of a **lookahead bug**: DataGolf reuses `event_id` across annual editions of the same tournament, the
+backtest cache was keyed by `event_id` alone (2024 predictions silently overwrote 2023), and the matchup
+evaluation joined odds without a year filter — so ~47% of 2023 bets were priced with models that had been
+trained on data through 2024. The same collision also merged two years' fields and recorded wrong winners
+for the outright evaluation. Both are fixed (composite `(event_id, year)` keys end-to-end, regression
+tests in [`golf_model/tests/`](golf_model/tests/)).
 
-All H2H gates pass: sample ≥ 100, win rate > 50%, ROI > 0%, Sharpe > 0.3.
+### Head-to-head matchups — corrected (live betting paused)
 
-### Outright winners — shelved
+| Metric | Original (leaked) | Corrected |
+|---|---|---|
+| Bets | 1,854 | 2,075 across 55 events |
+| Win rate | 56.6% | **49.8%** |
+| ROI (Kelly-sized) | +6.0% | **−5.3%** |
+| Flat-stake ROI | — | −4.7% (cluster-bootstrap 95% CI: −9.8% to +0.3%) |
+| Sharpe (annualized) | 1.48 | −1.33 |
+| P(true ROI ≤ 0) | — | 0.97 |
 
-Backtest ROI looked high (84%), but it **fails the gates that matter**:
+Per-year results are now symmetric (2023: 49.0% WR, 2024: 50.6% WR) — the original run's suspicious
+63.8%/50.3% split between years was the leak's signature. **All H2H gates fail except sample size.**
 
-- **Calibration:** model Brier 0.013 > market Brier 0.011 (worse than the book).
-- **Significance:** Diebold-Mariano p ≈ 0.99; the model beat the market in only ~18% of events.
-- **Concentration:** ~100% of the profit came from 3 events — luck, not edge.
+Two further caveats on even these corrected numbers:
 
-The takeaway that drove the whole project: **a diversified stream of small matchup edges beats chasing
-longshot winners.**
+- The betting hyperparameters (edge threshold, probability temperature, sizing) were historically tuned on
+  this same 2023–24 holdout, so this is a diagnostic, not an out-of-sample estimate. A frozen-parameter
+  2025–26 OOS validation is the next gating step before any live betting resumes.
+- The benchmark is the **Pinnacle closing line** — the sharpest available price. Live execution at softer
+  books / earlier lines is a lower bar, but no edge vs the close means no demonstrated skill.
+
+### Outright winners — still shelved
+
+The corrected backtest confirms the original verdict:
+
+- **Calibration:** model Brier 0.0149 > market Brier 0.0127 (worse than the book). **FAIL**
+- **Significance:** model does not beat the market at any reasonable confidence. **FAIL**
+- The betting-metrics gate technically passes (+21% ROI on 84 bets), but the sample is small and
+  concentration-prone — the same pattern the audit flagged as luck, not edge.
+
+The honest takeaway: **the model currently ranks players roughly as well as the closing line, not better.**
+The original "diversified matchup edge" conclusion was an artifact of the lookahead bug.
 
 ---
 
 ## How it works
 
-Core generative model for golfer *i* in round *r* of tournament *t*:
+Conceptual generative model for golfer *i* in round *r* of tournament *t*:
 
 ```
 Y_{i,r,t} = μ_{i,t} + γ_{c(t)} · δ_i + ε_{i,r,t}
 ```
 
-- **μ_{i,t}** — player skill, estimated with Bayesian shrinkage over strokes-gained components
-  (off-the-tee, approach, around-the-green, putting), time-weighted with dual EWMA decay (25 rounds / 120 days).
-- **γ_{c(t)} · δ_i** — player × course-fit interaction (optional Phase 4).
-- **ε ~ Student-t(ν=6)** — heavy-tailed round noise, because golf scoring has fat tails.
+**What actually runs in production** ([`golf_model/models/production_ewma.py`](golf_model/models/production_ewma.py))
+is an empirical-Bayes-flavored heuristic stack, *not* the full PyMC hierarchical model (that exists in
+[`golf_model/models/bayesian_core.py`](golf_model/models/bayesian_core.py) as research code, validated in
+notebook 04 but never promoted):
 
-The pipeline then runs **50K–100K Monte Carlo tournament simulations** (cut rules, round correlation,
-playoffs) to produce P(win), P(top-5/10), P(make-cut), and P(A beats B) for every player. Sportsbook odds are
-de-vigged (Shin's method), compared to model probabilities to detect edges, and bets are sized with
-**fractional (¼) Kelly** under exposure caps.
+1. **μ_{i,t}** — dual-decay EWMA skill estimates over strokes-gained (25 rounds / 120 days half-life)
+2. Course-specific SG component re-weighting (from the historical variance of SG components at the event)
+3. Recent-form blend (40% weight on the last 8 rounds)
+4. Event-history course-fit with normal-conjugate shrinkage — a simplified stand-in for **γ_{c(t)} · δ_i**
+5. **ε ~ Student-t(ν=6)** — heavy-tailed round noise with within-tournament correlation ρ=0.15
+
+The pipeline then runs **50K Monte Carlo tournament simulations** (cut rules, playoffs, cut-aware H2H
+settlement per real 72-hole match rules) to produce P(win), P(top-5/10), P(make-cut), and P(A beats B) for
+every player. Sportsbook odds are de-vigged, compared to model probabilities to detect edges, and bets are
+sized with **fractional (¼) Kelly** under per-bet and per-event exposure caps.
 
 Deeper detail: [`ARCHITECTURE.md`](ARCHITECTURE.md) (15-pipe design) and
 [`mathbehind/`](mathbehind/) (full mathematical writeup).

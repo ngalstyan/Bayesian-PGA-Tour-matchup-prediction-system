@@ -204,6 +204,23 @@ def test_get_winner_round_score_excludes_cut_missers(tmp_path):
     assert engine._get_winner(event_rounds) == 1
 
 
+def test_evaluate_outrights_with_composite_keys(backtest):
+    """evaluate() must iterate composite (event_id, year) keys and filter
+    outright odds by both event_id and calendar_year."""
+    cfg, engine, _, cache = backtest
+    odds = pd.DataFrame([
+        {"event_id": EVENT_ID, "calendar_year": y, "player_id": pid,
+         "book": "pinnacle", "market": "win", "decimal_odds": o}
+        for y in (2023, 2024)
+        for pid, o in ((1, 2.5), (2, 3.0), (3, 4.0))
+    ])
+    events = _make_events()
+    result = engine.evaluate(cache, events, odds)
+    assert result.total_events == 2
+    # Market Brier present for both editions (odds matched per year)
+    assert all(e.market_brier > 0 for e in result.events)
+
+
 def test_old_cache_versions_are_refused(tmp_path):
     """V1/V2 caches predate the collision fix and are corrupted — refuse them."""
     path = tmp_path / "old_cache.pkl"

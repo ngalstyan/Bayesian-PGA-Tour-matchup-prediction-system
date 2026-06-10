@@ -11,12 +11,17 @@ golf_model/data/raw/
 golf_model/data/processed/
 golf_model/data/diagnostics/
 golf_model/cache/
-golf_model/artifacts/
+golf_model/artifacts/**
+
+# ...but keep canonical results JSONs (backtest/OOS records) under version control
+!golf_model/artifacts/outputs/
+!golf_model/artifacts/outputs/*.json
 
 # Legacy / redundant
 old/
 golf_model.zip
 outputs/
+!golf_model/artifacts/outputs/
 
 # Logs
 logs/
