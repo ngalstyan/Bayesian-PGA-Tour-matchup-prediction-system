@@ -6,9 +6,10 @@ and sizes bets with fractional Kelly.
 
 > **Status (June 2026):** A code audit found a lookahead bug in the original backtest (DataGolf reuses
 > `event_id` across annual editions; ~47% of H2H bets were priced with models trained on future data).
-> After the fix, the corrected 2023–24 backtest shows **no demonstrated H2H edge vs the Pinnacle closing
-> line** (49.8% win rate, −5.3% ROI). **Live betting is paused** pending the frozen-parameter 2025–26
-> out-of-sample validation. Outright-winner betting still fails calibration. See [Results](#results).
+> After the fix, the corrected 2023–24 backtest shows **no H2H edge vs the Pinnacle closing line**
+> (49.8% win rate, −5.3% ROI), and the frozen-parameter 2025–26 out-of-sample validation **confirms it**
+> (48.1% win rate, −8.6% ROI, flat-stake 95% CI entirely below zero). **Live betting is stopped.**
+> The project is now an honest research platform, not a profitable strategy. See [Results](#results).
 
 ---
 
@@ -54,39 +55,46 @@ trained on data through 2024. The same collision also merged two years' fields a
 for the outright evaluation. Both are fixed (composite `(event_id, year)` keys end-to-end, regression
 tests in [`golf_model/tests/`](golf_model/tests/)).
 
-### Head-to-head matchups — corrected (live betting paused)
+### Head-to-head matchups — corrected (live betting stopped)
 
-| Metric | Original (leaked) | Corrected |
-|---|---|---|
-| Bets | 1,854 | 2,075 across 55 events |
-| Win rate | 56.6% | **49.8%** |
-| ROI (Kelly-sized) | +6.0% | **−5.3%** |
-| Flat-stake ROI | — | −4.7% (cluster-bootstrap 95% CI: −9.8% to +0.3%) |
-| Sharpe (annualized) | 1.48 | −1.33 |
-| P(true ROI ≤ 0) | — | 0.97 |
+| Metric | Original (leaked) | Corrected 2023–24 | OOS 2025–26 (frozen params) |
+|---|---|---|---|
+| Bets | 1,854 | 2,075 across 55 events | 1,165 across 47 events |
+| Win rate | 56.6% | **49.8%** | **48.1%** |
+| ROI (Kelly-sized) | +6.0% | **−5.3%** | **−8.6%** |
+| Flat-stake ROI | — | −4.7% (95% CI: −9.8% to +0.3%) | −6.7% (95% CI: −11.8% to −1.6%) |
+| Sharpe (annualized) | 1.48 | −1.33 | −1.77 |
+| P(true ROI ≤ 0) | — | 0.97 | 0.994 |
 
-Per-year results are now symmetric (2023: 49.0% WR, 2024: 50.6% WR) — the original run's suspicious
-63.8%/50.3% split between years was the leak's signature. **All H2H gates fail except sample size.**
+Per-year results in the corrected 2023–24 run are symmetric (49.0% / 50.6% WR) — the original run's
+suspicious 63.8%/50.3% split between years was the leak's signature. **All H2H gates fail except sample
+size, in both periods.**
 
-Two further caveats on even these corrected numbers:
+The 2025–26 column is the decisive one: every parameter frozen, zero tuning against the period, evaluated
+against the Pinnacle closing line (the sharpest price; CIs are cluster-bootstrapped by event). The
+flat-stake confidence interval excludes zero from above — the strategy doesn't just fail to win, it
+reliably loses roughly the size of the vig plus a real mispricing penalty. Canonical record:
+[`golf_model/artifacts/outputs/oos_validation_2025_2026_results.json`](golf_model/artifacts/outputs/oos_validation_2025_2026_results.json),
+reproducible with `cd golf_model && python run_oos_validation.py`.
 
-- The betting hyperparameters (edge threshold, probability temperature, sizing) were historically tuned on
-  this same 2023–24 holdout, so this is a diagnostic, not an out-of-sample estimate. A frozen-parameter
-  2025–26 OOS validation is the next gating step before any live betting resumes.
-- The benchmark is the **Pinnacle closing line** — the sharpest available price. Live execution at softer
-  books / earlier lines is a lower bar, but no edge vs the close means no demonstrated skill.
+Disclosures on the OOS run: live betting operated during 2025–26 and may have informally influenced earlier
+parameter choices; 2026 is a partial season (through early June); the closing-line benchmark is generally
+not executable at size, but no edge vs the close means no demonstrated skill.
 
 ### Outright winners — still shelved
 
-The corrected backtest confirms the original verdict:
+Both periods confirm the original verdict:
 
-- **Calibration:** model Brier 0.0149 > market Brier 0.0127 (worse than the book). **FAIL**
+- **Calibration:** model Brier 0.0149 vs market 0.0127 (2023–24) and 0.0148 vs 0.0123 (2025–26) — worse
+  than the book in both. **FAIL**
 - **Significance:** model does not beat the market at any reasonable confidence. **FAIL**
-- The betting-metrics gate technically passes (+21% ROI on 84 bets), but the sample is small and
-  concentration-prone — the same pattern the audit flagged as luck, not edge.
+- **Betting:** the 2023–24 betting gate technically passed (+21% ROI on 84 bets, small and
+  concentration-prone); out-of-sample it collapsed to **−29.7% ROI** on 49 bets. Luck, not edge — confirmed.
 
-The honest takeaway: **the model currently ranks players roughly as well as the closing line, not better.**
-The original "diversified matchup edge" conclusion was an artifact of the lookahead bug.
+The honest takeaway: **the model ranks players roughly as well as the closing line, not better.** The
+original "diversified matchup edge" conclusion was an artifact of the lookahead bug. The system is a solid
+research/backtesting platform with honest validation machinery — and that machinery's verdict is that the
+current model should not bet real money.
 
 ---
 

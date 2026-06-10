@@ -1,0 +1,103 @@
+{
+  "generated_at": "2026-06-10T15:42:37.167410",
+  "git_sha": "23911701dda21d4dc1de314953f15fff2be9d00b",
+  "oos_seasons": [
+    2025,
+    2026
+  ],
+  "disclosures": [
+    "Parameters frozen at config/settings.py values as of the June 2026 remediation; live betting ran during 2025-2026 and may have informally influenced earlier parameter choices.",
+    "2026 is a partial season (through early June 2026).",
+    "Benchmark is the Pinnacle CLOSING line (sharpest, generally not executable at size)."
+  ],
+  "model_params": {
+    "EWMA_HALF_LIFE_ROUNDS": 25.0,
+    "EWMA_HALF_LIFE_DAYS": 120.0,
+    "OBSERVATION_DF": 6.0,
+    "ROUND_CORRELATION_RHO": 0.15,
+    "COURSE_SG_BLEND": 0.5,
+    "RECENT_FORM_BLEND": 0.4,
+    "COURSE_FIT_SHRINKAGE": 0.5,
+    "MU_STD_CAP": 0.1,
+    "PRODUCTION_N_SIMULATIONS": 50000,
+    "PROB_TEMPERATURE": 0.35,
+    "MATCHUP_MIN_EDGE": 0.08,
+    "KELLY_FRACTION": 0.25,
+    "MATCHUP_MAX_BET_PCT": 0.015,
+    "MAX_TOURNAMENT_EXPOSURE_PCT": 0.3,
+    "OVERROUND_METHOD": "proportional"
+  },
+  "integrity": {
+    "n_cache_entries": 71,
+    "n_unique_event_ids": 49,
+    "keys_match_meta_year": true,
+    "winners_checked": 71,
+    "winners_correct": 71,
+    "winner_mismatches": []
+  },
+  "walk": {
+    "n_events_scored": 71,
+    "n_events_skipped": 0,
+    "skip_reasons": {}
+  },
+  "outright": {
+    "n_events": 71,
+    "model_avg_brier": 0.0148,
+    "market_avg_brier": 0.01229,
+    "n_bets": 49,
+    "total_staked": 4055.39,
+    "total_pnl": -1203.25,
+    "roi_pct": -29.67,
+    "sharpe": -0.19,
+    "max_dd_pct": 27.7,
+    "gate_1_calibration": false,
+    "gate_2_significance": false,
+    "gate_3_betting": "False"
+  },
+  "h2h_matchups": {
+    "n_bets": 1165,
+    "n_won": 560,
+    "win_rate": 48.1,
+    "total_staked": 39989.15,
+    "total_pnl": -3434.14,
+    "roi_pct": -8.6,
+    "sharpe": -1.77,
+    "max_dd_pct": 71.3,
+    "final_bankroll": 1565.74,
+    "n_events_with_bets": 47,
+    "n_events_evaluated": 68,
+    "events_per_year": 47.9,
+    "per_year": {
+      "2025": {
+        "n_bets": 808,
+        "win_rate_pct": 47.0,
+        "roi_pct": -10.3
+      },
+      "2026": {
+        "n_bets": 357,
+        "win_rate_pct": 50.4,
+        "roi_pct": -2.4
+      }
+    },
+    "flat_stake_roi": {
+      "flat_roi_pct": -6.74,
+      "iid_ci95_pct": [
+        -12.35,
+        -1.14
+      ],
+      "cluster_bootstrap_ci95_pct": [
+        -11.83,
+        -1.64
+      ],
+      "p_roi_leq_0": 0.994,
+      "n_bootstrap": 5000
+    },
+    "gates": {
+      "sample_size_ge_100": true,
+      "win_rate_gt_50": "False",
+      "roi_gt_0": "False",
+      "sharpe_gt_0.3": false,
+      "all_passed": false
+    }
+  }
+}
